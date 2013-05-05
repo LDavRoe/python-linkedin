@@ -122,11 +122,11 @@ class LinkedInSelector(object):
 
 
 class LinkedInApplication(object):
-    def __init__(self, authentication):
-        assert authentication, 'Authentication instance must be provided'
-        assert type(authentication) == LinkedInAuthentication, 'Auth type mismatch'
+    def __init__(self, access_token):
+        assert access_token, 'models.AccessToken instance must be provided'
+        assert type(access_token) == AccessToken, 'AccessToken type mismatch'
         self.BASE_URL = 'https://api.linkedin.com'
-        self.authentication = authentication
+        self.access_token = access_token
 
     def request_succeeded(self, response):
         return not (('error' in response) or ('errorCode' in response))
@@ -139,9 +139,9 @@ class LinkedInApplication(object):
             headers.update({'x-li-format': 'json', 'Content-Type': 'application/json'})
 
         if params is None:
-            params = {'oauth2_access_token': self.authentication.token.access_token}
+            params = {'oauth2_access_token': self.access_token.access_token}
         else:
-            params['oauth2_access_token'] = self.authentication.token.access_token
+            params['oauth2_access_token'] = self.access_token.access_token
 
         return requests.request(method.upper(), url, data=data, params=params,
                                 headers=headers, timeout=timeout)
