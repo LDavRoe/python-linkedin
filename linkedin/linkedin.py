@@ -1,5 +1,4 @@
 import requests
-from requests_oauthlib import OAuth1
 import urllib
 import random
 import hashlib
@@ -53,29 +52,9 @@ NETWORK_UPDATES = make_enum('NetworkUpdate',
                             VIRAL='VIRL')
 
 
-class LinkedInDeveloperAuthentication(object):
-    """
-    Uses all four credentials provided by LinkedIn as part of an OAuth 1.0a flow that provides instant
-    API access with no redirects/approvals required. Useful for situations in which users would like to
-    access their own data or during the development process.
-    """
-
-    def __init__(self, consumer_key, consumer_secret, user_token, user_secret, redirect_uri, permissions=[]):
-        self.consumer_key = consumer_key
-        self.consumer_secret = consumer_secret
-        self.user_token = user_token
-        self.user_secret = user_secret
-        self.redirect_uri = redirect_uri
-        self.permissions = permissions
-
 class LinkedInAuthentication(object):
-    """
-    Implements a standard OAuth 2.0 flow that involves redirection for users to authorize the application
-    to access account data.
-    """
-
     def __init__(self, key, secret, redirect_uri, permissions=[]):
-        self.AUTHORIZATION_URL = 'https://www.linkedin.com/uas/oauth2/authorization'
+        self.AUTHORIZATON_URL = 'https://www.linkedin.com/uas/oauth2/authorization'
         self.ACCESS_TOKEN_URL = 'https://www.linkedin.com/uas/oauth2/accessToken'
         self.key = key
         self.secret = secret
@@ -97,8 +76,7 @@ class LinkedInAuthentication(object):
         # urlencode uses quote_plus when encoding the query string so,
         # we ought to be encoding the qs by on our own.
         qsl = ['%s=%s' % (urllib.quote(k), urllib.quote(v)) for k, v in qd.items()]
-        return '%s?%s' % (self.AUTHORIZATION_URL, '&'.join(qsl))
-
+        return '%s?%s' % (self.AUTHORIZATON_URL, '&'.join(qsl))
 
     @property
     def last_error(self):
@@ -144,11 +122,11 @@ class LinkedInSelector(object):
 
 
 class LinkedInApplication(object):
-    def __init__(self, authentication):
-        assert authentication, 'Authentication instance must be provided'
-        assert type(authentication) in (LinkedInAuthentication, LinkedInDeveloperAuthentication), 'Auth type mismatch'
+    def __init__(self, access_token):
+        assert access_token, 'models.AccessToken instance must be provided'
+        assert type(access_token) == AccessToken, 'AccessToken type mismatch'
         self.BASE_URL = 'https://api.linkedin.com'
-        self.authentication = authentication
+        self.access_token = access_token
 
     def request_succeeded(self, response):
         return not (('error' in response) or ('errorCode' in response))
@@ -161,20 +139,12 @@ class LinkedInApplication(object):
             headers.update({'x-li-format': 'json', 'Content-Type': 'application/json'})
 
         if params is None:
-            params = {}
-        kw = dict(data=data, params=params,
-                  headers=headers, timeout=timeout)
-
-        if isinstance(self.authentication, LinkedInDeveloperAuthentication):
-            # Let requests_oauthlib.OAuth1 do *all* of the work here
-            auth = OAuth1(self.authentication.consumer_key, self.authentication.consumer_secret,
-                          self.authentication.user_token, self.authentication.user_secret)
-            kw.update({'auth': auth})
+            params = {'oauth2_access_token': self.access_token.access_token}
         else:
-            params.update({'oauth2_access_token': self.authentication.token.access_token})
+            params['oauth2_access_token'] = self.access_token.access_token
 
-        return requests.request(method.upper(), url, **kw)
-
+        return requests.request(method.upper(), url, data=data, params=params,
+                                headers=headers, timeout=timeout)
 
     def get_profile(self, member_id=None, member_url=None, selectors=None,
                     params=None, headers=None):
@@ -202,24 +172,6 @@ class LinkedInApplication(object):
                                LinkedInSelector.parse(selectors))
         else:
             url = ENDPOINTS.PEOPLE_SEARCH
-        try:
-            response = self.make_request('GET', url, params=params, headers=headers)
-            response = response.json()
-        except requests.ConnectionError as error:
-            raise LinkedInHTTPError(error.message)
-        else:
-            if not self.request_succeeded(response):
-                raise LinkedInError(response)
-            return response
-
-    def get_picture_urls(self, member_id=None, member_url=None,
-                    params=None, headers=None):
-        if member_id:
-                url = '%s/id=%s/picture-urls::(original)' % (ENDPOINTS.PEOPLE, str(member_id))
-        elif member_url:
-            url = '%s/url=%s/picture-urls::(original)' % (ENDPOINTS.PEOPLE, urllib.quote_plus(member_url))
-        else:
-            url = '%s/~/picture-urls::(original)' % ENDPOINTS.PEOPLE
         try:
             response = self.make_request('GET', url, params=params, headers=headers)
             response = response.json()
@@ -351,18 +303,6 @@ class LinkedInApplication(object):
                 raise LinkedInError(response)
             return True
 
-    def get_company_by_email_domain(self, email_domain, params=None, headers=None):
-        url = '%s?email-domain=%s' % (ENDPOINTS.COMPANIES, email_domain)
-        try:
-            response = self.make_request('GET', url, params=params, headers=headers)
-            response = response.json()
-        except requests.ConnectionError as error:
-            raise LinkedInHTTPError(error.message)
-        else:
-            if not self.request_succeeded(response):
-                raise LinkedInError(response)
-            return response
-
     def get_companies(self, company_ids=None, universal_names=None, selectors=None,
                       params=None, headers=None):
         identifiers = []
@@ -453,8 +393,6 @@ class LinkedInApplication(object):
 
     def get_job(self, job_id, selectors=None, params=None, headers=None):
         url = '%s/%s' % (ENDPOINTS.JOBS, str(job_id))
-        if selectors:
-            url = '%s:(%s)' % (url, LinkedInSelector.parse(selectors))
         try:
             response = self.make_request('GET', url, params=params, headers=headers)
             response = response.json()
@@ -493,24 +431,20 @@ class LinkedInApplication(object):
                 raise LinkedInError(response)
             return response
 
-    def submit_share(self, comment=None, title=None, description=None,
-                     submitted_url=None, submitted_image_url=None,
-                     visibility_code='anyone'):
+    def submit_share(self, comment, title, description, submitted_url,
+                     submitted_image_url):
         post = {
-            'visibility': {
-                'code': visibility_code,
-            },
-        }
-        if comment is not None:
-            post['comment'] = comment
-        if title is not None and submitted_url is not None:
-            post['content'] = {
+            'comment': comment,
+            'content': {
                 'title': title,
                 'submitted-url': submitted_url,
                 'submitted-image-url': submitted_image_url,
-                'description': description,
+                'description': description
+            },
+            'visibility': {
+                'code': 'anyone'
             }
-
+        }
         url = '%s/~/shares' % ENDPOINTS.PEOPLE
         try:
             response = self.make_request('POST', url, data=json.dumps(post))
@@ -561,25 +495,6 @@ class LinkedInApplication(object):
         try:
             response = self.make_request('POST', url,
                                          data=json.dumps(invitation.json))
-            response.raise_for_status()
-        except (requests.ConnectionError, requests.HTTPError), error:
-            raise LinkedInHTTPError(error.message)
-        return True
-
-    def comment_on_update(self, update_key, comment):
-        comment = {'comment': comment}
-        url = '%s/~/network/updates/key=%s/update-comments' % (ENDPOINTS.PEOPLE, update_key)
-        try:
-            response = self.make_request('POST', url, data=json.dumps(comment))
-            response.raise_for_status()
-        except (requests.ConnectionError, requests.HTTPError), error:
-            raise LinkedInHTTPError(error.message)
-        return True
-
-    def like_update(self, update_key, is_liked=True):
-        url = '%s/~/network/updates/key=%s/is-liked' % (ENDPOINTS.PEOPLE, update_key)
-        try:
-            response = self.make_request('PUT', url, data=json.dumps(is_liked))
             response.raise_for_status()
         except (requests.ConnectionError, requests.HTTPError), error:
             raise LinkedInHTTPError(error.message)

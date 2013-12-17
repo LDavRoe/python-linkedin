@@ -19,20 +19,19 @@ def quick_api(api_key, secret_key):
     """
     auth = LinkedInAuthentication(api_key, secret_key, 'http://localhost:8000/',
                                   PERMISSIONS.enums.values())
-    app = LinkedInApplication(authentication=auth)
     print auth.authorization_url
-    _wait_for_user_to_enter_browser(app)
-    return app
+    _wait_for_user_to_enter_browser(auth)
+    access_token = auth.get_access_token()
+    return LinkedInApplication(access_token=access_token)
 
 
-def _wait_for_user_to_enter_browser(app):
+def _wait_for_user_to_enter_browser(auth):
     class MyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         def do_GET(self):
             p = self.path.split('?')
             if len(p) > 1:
                 params = cgi.parse_qs(p[1], True, True)
-                app.authentication.authorization_code = params['code'][0]
-                app.authentication.get_access_token()
+                auth.authorization_code = params['code'][0]
 
     server_address = ('', 8000)
     httpd = BaseHTTPServer.HTTPServer(server_address, MyHandler)
